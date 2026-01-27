@@ -12,6 +12,75 @@
 #include "libxml/xpath.h"
 #include <shlwapi.h>
 
+namespace {
+bool IsBlankChar(wchar_t ch)
+{
+    return ch == L' ' || ch == L'\t' || ch == 0x3000 || ch == 0xA0;
+}
+
+std::wstring TrimTitle(const std::wstring &title)
+{
+    size_t start = 0;
+    size_t end = title.size();
+    while (start < end && IsBlankChar(title[start]))
+        start++;
+    while (end > start && IsBlankChar(title[end - 1]))
+        end--;
+    return title.substr(start, end - start);
+}
+
+bool IsGenericTocTitle(const std::wstring &title)
+{
+    std::wstring trimmed = TrimTitle(title);
+    if (trimmed.empty())
+        return true;
+    std::wstring lower;
+    lower.reserve(trimmed.size());
+    for (size_t i = 0; i < trimmed.size(); i++)
+    {
+        wchar_t ch = trimmed[i];
+        if (ch >= L'A' && ch <= L'Z')
+            ch = ch - L'A' + L'a';
+        lower.push_back(ch);
+    }
+    if (lower == L"contents" || lower == L"table of contents" || trimmed == L"目录")
+        return true;
+    return false;
+}
+
+bool DecodeNodeText(xmlNodePtr node, wchar_t **out, int *out_len)
+{
+    if (!node)
+        return false;
+    xmlChar *value = xmlNodeGetContent(node);
+    if (!value)
+        return false;
+    BOOL ok = DecodeText((const char *)value, (int)strlen((const char *)value), out, out_len);
+    xmlFree(value);
+    return ok == TRUE;
+}
+
+std::wstring FirstVisibleLine(const wchar_t *text, int len)
+{
+    int i = 0;
+    while (i < len)
+    {
+        wchar_t ch = text[i];
+        if (ch == 0x0A || ch == 0x0D || IsBlankChar(ch))
+        {
+            i++;
+            continue;
+        }
+        break;
+    }
+    int start = i;
+    while (i < len && text[i] != 0x0A && text[i] != 0x0D)
+        i++;
+    std::wstring line(text + start, i - start);
+    return TrimTitle(line);
+}
+} // namespace
+
 
 EpubBook::EpubBook()
     : m_Cover(NULL)
@@ -720,27 +789,34 @@ BOOL EpubBook::ParserOps(file_data_t *fdata, wchar_t **text, int *len, wchar_t *
 
     if (parsertitle)
     {
-        // parser title
-        xpath = BAD_CAST("//*[local-name()='title']");
+        bool title_set = false;
+
+        xpath = BAD_CAST("//*[local-name()='h1' or local-name()='h2' or local-name()='h3']");
         xpathobj = xmlXPathEvalExpression(xpath, xpathctx);
-        if (!xpathobj)
-            goto body;
-
-        if (xmlXPathNodeSetIsEmpty(xpathobj->nodesetval))
-            goto body;
-
-        nodeset = xpathobj->nodesetval;
-        for (i = 0; i < nodeset->nodeNr; i++)
+        if (xpathobj && !xmlXPathNodeSetIsEmpty(xpathobj->nodesetval))
         {
-            value = xmlNodeGetContent(nodeset->nodeTab[i]);
+            nodeset = xpathobj->nodesetval;
+            if (DecodeNodeText(nodeset->nodeTab[0], title, tlen))
+                title_set = (*tlen > 0);
+        }
+        if (xpathobj)
+            xmlXPathFreeObject(xpathobj);
+        xpathobj = NULL;
 
-            if (!DecodeText((const char *)value, (int)strlen((const char *)value), title, tlen))
+        if (!title_set)
+        {
+            // parser title
+            xpath = BAD_CAST("//*[local-name()='title']");
+            xpathobj = xmlXPathEvalExpression(xpath, xpathctx);
+            if (xpathobj && !xmlXPathNodeSetIsEmpty(xpathobj->nodesetval))
             {
-                xmlFree(value);
-                break;
+                nodeset = xpathobj->nodesetval;
+                if (DecodeNodeText(nodeset->nodeTab[0], title, tlen))
+                    title_set = (*tlen > 0);
             }
-            xmlFree(value);
-            break;
+            if (xpathobj)
+                xmlXPathFreeObject(xpathobj);
+            xpathobj = NULL;
         }
     }
 
@@ -748,8 +824,6 @@ BOOL EpubBook::ParserOps(file_data_t *fdata, wchar_t **text, int *len, wchar_t *
         goto end;
 
 body:
-    if (xpathobj)
-        xmlXPathFreeObject(xpathobj);
     {
         // parser body
         xpath = BAD_CAST("//*[local-name()='body']");
@@ -772,6 +846,20 @@ body:
 
             xmlFree(value);
             break;
+        }
+    }
+
+    if (parsertitle && (!(*title) || *tlen <= 0) && (*text) && *len > 0)
+    {
+        std::wstring fallback = FirstVisibleLine(*text, *len);
+        if (!fallback.empty())
+        {
+            if (*title)
+                free(*title);
+            *tlen = (int)fallback.size();
+            *title = (wchar_t *)malloc(sizeof(wchar_t) * (*tlen + 1));
+            memcpy(*title, fallback.c_str(), sizeof(wchar_t) * (*tlen));
+            (*title)[*tlen] = 0;
         }
     }
 
@@ -821,7 +909,7 @@ BOOL EpubBook::ParserChapters(epub_t &epub)
             if (itflist != m_flist.end() /*&& itnav != epub.navmap.end()*/)
             {
                 fdata = &(itflist->second);
-                if (ParserOps(fdata, &text, &len, &title, &tlen, itnav == epub.navpoints.end()))
+                if (ParserOps(fdata, &text, &len, &title, &tlen, TRUE))
                 {
                     if (len > 0)
                     {
@@ -831,15 +919,41 @@ BOOL EpubBook::ParserChapters(epub_t &epub)
                         m_Length += len;
                         if (itnav != epub.navpoints.end())
                         {
-                            DecodeText(itnav->second->text.c_str(), (int)itnav->second->text.size(), &title, &tlen);
-                            chapter.title = title;
+                            wchar_t *nav_title = NULL;
+                            int nav_len = 0;
+                            DecodeText(itnav->second->text.c_str(), (int)itnav->second->text.size(), &nav_title, &nav_len);
+                            std::wstring nav = nav_title ? nav_title : L"";
+                            std::wstring fallback = title ? title : L"";
+                            if (nav_title)
+                                free(nav_title);
+                            if (IsGenericTocTitle(nav))
+                            {
+                                chapter.title = fallback;
+                                tlen = (int)fallback.size();
+                            }
+                            else
+                            {
+                                chapter.title = nav;
+                                tlen = (int)nav.size();
+                            }
                         }
                         else
                         {
-                            chapter.title = title;
+                            chapter.title = title ? title : L"";
+                            tlen = (int)chapter.title.size();
                         }
                         if (title)
+                        {
                             free(title);
+                            title = NULL;
+                            tlen = 0;
+                        }
+                        if (chapter.title.empty())
+                        {
+                            std::wstring fallback = Utf8ToUtf16(itmfest->second->href);
+                            chapter.title = fallback;
+                            tlen = (int)fallback.size();
+                        }
                         chapter.title_len = tlen;
                         if (!chapter.title.empty())
                             m_Chapters.push_back(chapter);

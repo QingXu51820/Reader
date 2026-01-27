@@ -2,6 +2,178 @@
 #include "types.h"
 #include <regex>
 
+namespace {
+const int kMarkerLookaheadLines = 3;
+const int kMaxTitleLength = 60;
+
+bool IsBlankChar(wchar_t ch)
+{
+    return ch == _T(' ') || ch == _T('\t') || ch == 0x3000 || ch == 0xA0;
+}
+
+bool IsSeparatorChar(wchar_t ch)
+{
+    switch (ch)
+    {
+    case _T('-'):
+    case 0x2014: // —
+    case 0x2013: // –
+    case _T('_'):
+    case _T('~'):
+    case _T('='):
+    case _T('|'):
+    case _T('·'):
+    case _T('•'):
+    case _T('.'):
+    case _T('。'):
+    case _T(':'):
+    case _T('：'):
+    case _T('、'):
+    case _T(','):
+    case _T('，'):
+    case _T('!'):
+    case _T('！'):
+    case _T('?'):
+    case _T('？'):
+    case _T('…'):
+    case _T('【'):
+    case _T('】'):
+    case _T('('):
+    case _T(')'):
+    case _T('（'):
+    case _T('）'):
+    case _T('['):
+    case _T(']'):
+    case _T('{'):
+    case _T('}'):
+    case _T('《'):
+    case _T('》'):
+    case _T('〈'):
+    case _T('〉'):
+    case _T('「'):
+    case _T('」'):
+    case _T('『'):
+    case _T('』'):
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsSeparatorLine(const wchar_t* text, int len)
+{
+    bool has_char = false;
+    for (int i = 0; i < len; i++)
+    {
+        if (IsBlankChar(text[i]))
+            continue;
+        has_char = true;
+        if (!IsSeparatorChar(text[i]))
+            return false;
+    }
+    return has_char;
+}
+
+bool ExtractNumberMarker(const wchar_t* text, int len, std::wstring &number)
+{
+    number.clear();
+    bool has_digits = false;
+    bool saw_prefix = false;
+
+    for (int i = 0; i < len; i++)
+    {
+        wchar_t ch = text[i];
+        if (IsBlankChar(ch) || IsSeparatorChar(ch))
+        {
+            continue;
+        }
+        if (!has_digits && ch == _T('第'))
+        {
+            if (saw_prefix)
+                return false;
+            saw_prefix = true;
+            continue;
+        }
+        if (ch >= _T('0') && ch <= _T('9'))
+        {
+            number.push_back(ch);
+            has_digits = true;
+            continue;
+        }
+        return false;
+    }
+
+    if (!has_digits)
+        return false;
+    if (number.size() > 4)
+        return false;
+    return true;
+}
+
+std::wstring TrimLine(const wchar_t* text, int len)
+{
+    int start = 0;
+    int end = len;
+    while (start < end && IsBlankChar(text[start]))
+        start++;
+    while (end > start && IsBlankChar(text[end - 1]))
+        end--;
+    return std::wstring(text + start, end - start);
+}
+
+bool IsGenericTitle(const std::wstring &title)
+{
+    if (title.empty())
+        return true;
+    std::wstring lower;
+    lower.reserve(title.size());
+    for (size_t i = 0; i < title.size(); i++)
+    {
+        wchar_t ch = title[i];
+        if (ch >= L'A' && ch <= L'Z')
+            ch = ch - L'A' + L'a';
+        lower.push_back(ch);
+    }
+    if (lower == L"contents" || lower == L"table of contents" || title == L"目录")
+        return true;
+    return false;
+}
+
+bool LooksLikeTitleLine(const wchar_t* text, int len)
+{
+    if (len <= 0 || len > kMaxTitleLength)
+        return false;
+
+    std::wstring trimmed = TrimLine(text, len);
+    if (trimmed.empty())
+        return false;
+    if (IsGenericTitle(trimmed))
+        return false;
+    if (IsSeparatorLine(trimmed.c_str(), (int)trimmed.size()))
+        return false;
+
+    for (size_t i = 0; i < trimmed.size(); i++)
+    {
+        wchar_t ch = trimmed[i];
+        if (!IsBlankChar(ch) && !IsSeparatorChar(ch))
+            return true;
+    }
+    return false;
+}
+
+std::wstring BuildChapterTitle(const std::wstring &number, const std::wstring &title)
+{
+    std::wstring combined = number;
+    if (!title.empty())
+    {
+        combined += L" ";
+        combined += title;
+    }
+    if (combined.size() >= MAX_CHAPTER_LENGTH)
+        combined.resize(MAX_CHAPTER_LENGTH - 1);
+    return combined;
+}
+} // namespace
 
 wchar_t TextBook::m_ValidChapter[] =
 {
@@ -165,10 +337,12 @@ BOOL TextBook::ParserChaptersDefault(void)
     wchar_t *text = m_Text;
     wchar_t title[MAX_CHAPTER_LENGTH] = { 0 };
     int line_size;
+    int is_blank_line;
     int title_len = 0;
     BOOL bFound = FALSE;
     int idx_1 = -1, idx_2 = -1;
     chapter_item_t chapter;
+    std::wstring number_marker;
 
     while (TRUE)
     {
@@ -177,9 +351,51 @@ BOOL TextBook::ParserChaptersDefault(void)
             return FALSE;
         }
 
-        if (!GetLine(text, m_Length - (int)(text - m_Text), &line_size, NULL, NULL, NULL, NULL))
+        if (!GetLine(text, m_Length - (int)(text - m_Text), &line_size, NULL, &is_blank_line, NULL, NULL))
         {
             break;
+        }
+
+        if (!is_blank_line && ExtractNumberMarker(text, line_size, number_marker))
+        {
+            wchar_t *peek = text + line_size + 1;
+            int consumed = line_size + 1;
+            std::wstring title_line;
+
+            for (int lookahead = 0; lookahead < kMarkerLookaheadLines; lookahead++)
+            {
+                int peek_line_size = 0;
+                int peek_blank = 0;
+
+                if (!GetLine(peek, m_Length - (int)(peek - m_Text), &peek_line_size, NULL, &peek_blank, NULL, NULL))
+                    break;
+
+                if (peek_blank || IsSeparatorLine(peek, peek_line_size))
+                {
+                    peek += peek_line_size + 1;
+                    consumed += peek_line_size + 1;
+                    continue;
+                }
+
+                if (LooksLikeTitleLine(peek, peek_line_size))
+                {
+                    title_line.assign(peek, peek_line_size);
+                    consumed += peek_line_size + 1;
+                }
+                break;
+            }
+
+            std::wstring combined = BuildChapterTitle(number_marker, title_line);
+            if (!combined.empty())
+            {
+                chapter.index = (int)(text - m_Text);
+                chapter.title = combined;
+                chapter.title_len = (int)combined.size();
+                m_Chapters.push_back(chapter);
+
+                text += consumed;
+                continue;
+            }
         }
 
         // check format
