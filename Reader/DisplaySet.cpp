@@ -350,8 +350,8 @@ static void _init_theme_mode_set(HWND hDlg)
     RECT rcColor = { 0 };
     RECT rcEnable = { 0 };
     HFONT hFont = (HFONT)SendMessage(hDlg, WM_GETFONT, 0, 0);
-    int comboWidth = 80;
-    int comboHeight = 80;
+    int initialComboWidth = 80;
+    int initialComboHeight = 80;
     int labelWidth = 52;
     int labelHeight = 12;
     int left = 0;
@@ -390,7 +390,7 @@ static void _init_theme_mode_set(HWND hDlg)
 
     hCombo = CreateWindowEx(0, WC_COMBOBOX, NULL,
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_TABSTOP,
-        left + labelWidth + 4, top, comboWidth, comboHeight,
+        left + labelWidth + 4, top, initialComboWidth, initialComboHeight,
         hDlg, (HMENU)IDC_COMBO_THEME_MODE, hInst, NULL);
 
     if (hFont)
