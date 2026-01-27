@@ -48,18 +48,6 @@ bool IsGenericTocTitle(const std::wstring &title)
     return false;
 }
 
-bool DecodeNodeText(xmlNodePtr node, wchar_t **out, int *out_len)
-{
-    if (!node)
-        return false;
-    xmlChar *value = xmlNodeGetContent(node);
-    if (!value)
-        return false;
-    BOOL ok = DecodeText((const char *)value, (int)strlen((const char *)value), out, out_len);
-    xmlFree(value);
-    return ok == TRUE;
-}
-
 std::wstring FirstVisibleLine(const wchar_t *text, int len)
 {
     int i = 0;
@@ -790,13 +778,24 @@ BOOL EpubBook::ParserOps(file_data_t *fdata, wchar_t **text, int *len, wchar_t *
     if (parsertitle)
     {
         bool title_set = false;
+        auto decode_node_text = [this](xmlNodePtr node, wchar_t **out, int *out_len) -> bool
+        {
+            if (!node)
+                return false;
+            xmlChar *value = xmlNodeGetContent(node);
+            if (!value)
+                return false;
+            BOOL ok = DecodeText((const char *)value, (int)strlen((const char *)value), out, out_len);
+            xmlFree(value);
+            return ok == TRUE;
+        };
 
         xpath = BAD_CAST("//*[local-name()='h1' or local-name()='h2' or local-name()='h3']");
         xpathobj = xmlXPathEvalExpression(xpath, xpathctx);
         if (xpathobj && !xmlXPathNodeSetIsEmpty(xpathobj->nodesetval))
         {
             nodeset = xpathobj->nodesetval;
-            if (DecodeNodeText(nodeset->nodeTab[0], title, tlen))
+            if (decode_node_text(nodeset->nodeTab[0], title, tlen))
                 title_set = (*tlen > 0);
         }
         if (xpathobj)
@@ -811,7 +810,7 @@ BOOL EpubBook::ParserOps(file_data_t *fdata, wchar_t **text, int *len, wchar_t *
             if (xpathobj && !xmlXPathNodeSetIsEmpty(xpathobj->nodesetval))
             {
                 nodeset = xpathobj->nodesetval;
-                if (DecodeNodeText(nodeset->nodeTab[0], title, tlen))
+                if (decode_node_text(nodeset->nodeTab[0], title, tlen))
                     title_set = (*tlen > 0);
             }
             if (xpathobj)
@@ -950,7 +949,7 @@ BOOL EpubBook::ParserChapters(epub_t &epub)
                         }
                         if (chapter.title.empty())
                         {
-                            std::wstring fallback = Utf8ToUtf16(itmfest->second->href);
+                            std::wstring fallback = Utf8ToUtf16(itmfest->second->href.c_str());
                             chapter.title = fallback;
                             tlen = (int)fallback.size();
                         }
