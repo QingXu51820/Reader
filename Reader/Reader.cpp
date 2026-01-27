@@ -1850,6 +1850,7 @@ LRESULT OnCreate(HWND hWnd)
     //TreeView_SetBkColor(_hTreeView, GetSysColor(COLOR_MENU));
     //TreeView_SetBkColor(_hTreeMark, GetSysColor(COLOR_MENU));
     SetTreeviewFont();
+    ApplyThemeToUi(hWnd);
 
     RemoveMenus(hWnd, FALSE);
     OnUpdateMenu(hWnd);
@@ -4243,6 +4244,27 @@ void SetTreeviewFont()
         SendMessage(_hTreeView, TVM_SETITEMHEIGHT, theMetrics.iMenuHeight, NULL);
         SendMessage(_hTreeMark, WM_SETFONT, (WPARAM)s_hFont, NULL);
         SendMessage(_hTreeMark, TVM_SETITEMHEIGHT, theMetrics.iMenuHeight, NULL);
+    }
+}
+
+void ApplyThemeToUi(HWND hWnd)
+{
+    if (!_header)
+        return;
+
+    if (_hTreeView)
+    {
+        TreeView_SetBkColor(_hTreeView, _header->bg_color);
+        TreeView_SetTextColor(_hTreeView, _header->font_color);
+    }
+    if (_hTreeMark)
+    {
+        TreeView_SetBkColor(_hTreeMark, _header->bg_color);
+        TreeView_SetTextColor(_hTreeMark, _header->font_color);
+    }
+    if (hWnd)
+    {
+        InvalidateRect(hWnd, NULL, FALSE);
     }
 }
 

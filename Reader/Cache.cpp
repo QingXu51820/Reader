@@ -365,6 +365,7 @@ void Cache::default_header(header_t* header)
 
     // default bk color
     header->bg_color = 0x00ffffff;  // White
+    header->theme_mode = ThemeModeLight;
     header->alpha = 0xff;
 
     header->char_gap = 0;

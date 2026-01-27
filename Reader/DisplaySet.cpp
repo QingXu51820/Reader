@@ -14,6 +14,7 @@ typedef struct display_set_data_t
     u32 font_color_title;
     int use_same_font;
     u32 bg_color;
+    int theme_mode;
     bg_image_t bg_image;
     int char_gap;
     int line_gap;
@@ -44,12 +45,14 @@ extern BOOL FileExists(TCHAR *file);
 extern void Save(HWND hWnd);
 extern VOID Invalidate(HWND hWnd, BOOL bOnlyClient, BOOL bErase);
 extern void SetTreeviewFont();
+extern void ApplyThemeToUi(HWND hWnd);
 
 static INT_PTR CALLBACK DisplaySetDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 static void _init_font_set(HWND hDlg);
 static void _init_bg_color_set(HWND hDlg);
 static void _init_bg_image_set(HWND hDlg);
 static void _init_layout_set(HWND hDlg);
+static void _init_theme_mode_set(HWND hDlg);
 static void _enable_font_set(HWND hDlg, BOOL enable);
 static void _enable_bg_image_set(HWND hDlg, BOOL enable);
 static BOOL _valid_font_set(HWND hDlg);
@@ -63,6 +66,10 @@ static void _start_color_picker(HWND hDlg);
 static void _stop_color_picker(HWND hDlg);
 static void _update_bg_rgb(HWND hDlg);
 static void _update_preview(HDC hDC, RECT *rc);
+static void _apply_theme_preset(display_set_data_t *data);
+
+#define IDC_STATIC_THEME_LABEL 20001
+#define IDC_COMBO_THEME_MODE   20002
 
 #define COPY_DISPLAY_PARAMS(s, d) \
     (d)->font = (s)->font; \
@@ -71,6 +78,7 @@ static void _update_preview(HDC hDC, RECT *rc);
     (d)->font_color_title = (s)->font_color_title; \
     (d)->use_same_font = (s)->use_same_font; \
     (d)->bg_color = (s)->bg_color; \
+    (d)->theme_mode = (s)->theme_mode; \
     (d)->bg_image = (s)->bg_image; \
     (d)->char_gap = (s)->char_gap; \
     (d)->line_gap = (s)->line_gap; \
@@ -119,6 +127,7 @@ void OpenDisplaySetDlg(void)
 
         COPY_DISPLAY_PARAMS(&_display, _header);
 
+        ApplyThemeToUi(_hWnd);
         Save(_hWnd);
         Invalidate(_hWnd, TRUE, FALSE);
 
@@ -144,6 +153,7 @@ static INT_PTR CALLBACK DisplaySetDlgProc(HWND hDlg, UINT message, WPARAM wParam
         _init_bg_color_set(hDlg);
         _init_bg_image_set(hDlg);
         _init_layout_set(hDlg);
+        _init_theme_mode_set(hDlg);
         return (INT_PTR)TRUE;
     case WM_COMMAND:
         switch (LOWORD(wParam))
@@ -188,6 +198,19 @@ static INT_PTR CALLBACK DisplaySetDlgProc(HWND hDlg, UINT message, WPARAM wParam
             _display.bg_image.enable = BST_CHECKED == res ? 1 : 0;
             _enable_bg_image_set(hDlg, _display.bg_image.enable);
             InvalidateRect(hDlg, NULL, FALSE);
+            break;
+        case IDC_COMBO_THEME_MODE:
+            if (HIWORD(wParam) == CBN_SELCHANGE)
+            {
+                res = (int)SendMessage(GetDlgItem(hDlg, IDC_COMBO_THEME_MODE), CB_GETCURSEL, 0, NULL);
+                if (res != -1 && res != _display.theme_mode)
+                {
+                    _display.theme_mode = res;
+                    _apply_theme_preset(&_display);
+                    _update_bg_rgb(hDlg);
+                    InvalidateRect(hDlg, NULL, FALSE);
+                }
+            }
             break;
         case IDC_BUTTON_BISEL:
             _bg_image_browse(hDlg);
@@ -312,6 +335,55 @@ static void _init_layout_set(HWND hDlg)
     SendMessage(GetDlgItem(hDlg, IDC_CHECK_INDENT), BM_SETCHECK, _display.line_indent ? BST_CHECKED : BST_UNCHECKED, NULL);
     SendMessage(GetDlgItem(hDlg, IDC_CHECK_BLANKLINES), BM_SETCHECK, _display.blank_lines ? BST_CHECKED : BST_UNCHECKED, NULL);
     SendMessage(GetDlgItem(hDlg, IDC_CHECK_CHAPTER_PAGE), BM_SETCHECK, _display.chapter_page ? BST_CHECKED : BST_UNCHECKED, NULL);
+}
+
+static void _init_theme_mode_set(HWND hDlg)
+{
+    HWND hCombo = NULL;
+    HWND hLabel = NULL;
+    RECT rcColor = { 0 };
+    RECT rcEnable = { 0 };
+    HFONT hFont = (HFONT)SendMessage(hDlg, WM_GETFONT, 0, 0);
+    int comboWidth = 80;
+    int comboHeight = 80;
+    int labelWidth = 52;
+    int labelHeight = 12;
+    int left = 0;
+    int top = 0;
+
+    GetWindowRect(GetDlgItem(hDlg, IDC_BUTTON_BGCOLOR), &rcColor);
+    GetWindowRect(GetDlgItem(hDlg, IDC_CHECK_BIENABLE), &rcEnable);
+    MapWindowPoints(HWND_DESKTOP, hDlg, (LPPOINT)&rcColor, 2);
+    MapWindowPoints(HWND_DESKTOP, hDlg, (LPPOINT)&rcEnable, 2);
+
+    left = rcColor.left;
+    top = rcColor.bottom + 4;
+    if (top + labelHeight >= rcEnable.top)
+        top = rcEnable.top - labelHeight - 4;
+
+    hLabel = CreateWindowEx(0, WC_STATIC, _T("ä¸»é¢˜æ¨¡å¼ï¼š"),
+        WS_CHILD | WS_VISIBLE,
+        left, top + 2, labelWidth, labelHeight,
+        hDlg, (HMENU)IDC_STATIC_THEME_LABEL, hInst, NULL);
+
+    hCombo = CreateWindowEx(0, WC_COMBOBOX, NULL,
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_TABSTOP,
+        left + labelWidth + 4, top, comboWidth, comboHeight,
+        hDlg, (HMENU)IDC_COMBO_THEME_MODE, hInst, NULL);
+
+    if (hFont)
+    {
+        SendMessage(hLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessage(hCombo, WM_SETFONT, (WPARAM)hFont, TRUE);
+    }
+
+    SendMessage(hCombo, CB_ADDSTRING, 0, (LPARAM)_T("æ˜Žäº®"));
+    SendMessage(hCombo, CB_ADDSTRING, 0, (LPARAM)_T("æš—é»‘"));
+
+    if (_display.theme_mode != ThemeModeDark)
+        _display.theme_mode = ThemeModeLight;
+
+    SendMessage(hCombo, CB_SETCURSEL, _display.theme_mode, 0);
 }
 
 static void _enable_font_set(HWND hDlg, BOOL enable)
@@ -601,11 +673,30 @@ static void _update_bg_rgb(HWND hDlg)
     SetDlgItemText(hDlg, IDC_STATIC_RGB, rgb);
 }
 
+static void _apply_theme_preset(display_set_data_t *data)
+{
+    if (!data)
+        return;
+
+    if (data->theme_mode == ThemeModeDark)
+    {
+        data->bg_color = RGB(30, 30, 30);
+        data->font_color = RGB(230, 230, 230);
+        data->font_color_title = RGB(255, 214, 153);
+    }
+    else
+    {
+        data->bg_color = RGB(255, 255, 255);
+        data->font_color = RGB(0, 0, 0);
+        data->font_color_title = RGB(0, 0, 0);
+    }
+}
+
 static void _update_preview(HDC hDC, RECT *p_rc)
 {
-    const TCHAR* TEXT_CPT1 = _T("±êÌâÔ¤ÀÀ");
+    const TCHAR* TEXT_CPT1 = _T("æ ‡é¢˜é¢„è§ˆ");
     const TCHAR* TEXT_CPT2 = _T("Title preview");
-    const TCHAR* TEXT1 = _T("ÕýÎÄÔ¤ÀÀ\r\n");
+    const TCHAR* TEXT1 = _T("æ­£æ–‡é¢„è§ˆ\r\n");
     const TCHAR* TEXT2 = _T("Text preview");
 
     HDC memdc;
