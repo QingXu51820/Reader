@@ -960,6 +960,15 @@ BOOL EpubBook::ParserChapters(epub_t &epub)
                         index++;
                     }
                 }
+                else
+                {
+                    if (title)
+                    {
+                        free(title);
+                        title = NULL;
+                        tlen = 0;
+                    }
+                }
             }
         }
     }

@@ -79,12 +79,15 @@ bool ExtractNumberMarker(const wchar_t* text, int len, std::wstring &number)
     number.clear();
     bool has_digits = false;
     bool saw_prefix = false;
+    bool saw_marker = false;
 
     for (int i = 0; i < len; i++)
     {
         wchar_t ch = text[i];
         if (IsBlankChar(ch) || IsSeparatorChar(ch))
         {
+            if (IsSeparatorChar(ch))
+                saw_marker = true;
             continue;
         }
         if (!has_digits && ch == _T('第'))
@@ -92,6 +95,7 @@ bool ExtractNumberMarker(const wchar_t* text, int len, std::wstring &number)
             if (saw_prefix)
                 return false;
             saw_prefix = true;
+            saw_marker = true;
             continue;
         }
         if (ch >= _T('0') && ch <= _T('9'))
@@ -104,6 +108,8 @@ bool ExtractNumberMarker(const wchar_t* text, int len, std::wstring &number)
     }
 
     if (!has_digits)
+        return false;
+    if (!saw_marker)
         return false;
     if (number.size() > 4)
         return false;
