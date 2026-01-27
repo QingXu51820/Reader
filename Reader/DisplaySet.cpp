@@ -2,9 +2,11 @@
 #include "resource.h"
 #include "types.h"
 #include "Book.h"
+#include "DPIAwareness.h"
 #include <CommDlg.h>
 #include <shlwapi.h>
 #include <WindowsX.h>
+#include <string>
 
 typedef struct display_set_data_t
 {
@@ -67,6 +69,10 @@ static void _stop_color_picker(HWND hDlg);
 static void _update_bg_rgb(HWND hDlg);
 static void _update_preview(HDC hDC, RECT *rc);
 static void _apply_theme_preset(display_set_data_t *data);
+
+static int _measure_text_width(HWND hWnd, const TCHAR *text);
+static int _measure_combo_text_width(HWND hWndCombo);
+static int _scale_by_dpi(int value);
 
 #define IDC_STATIC_THEME_LABEL 20001
 #define IDC_COMBO_THEME_MODE   20002
@@ -344,12 +350,28 @@ static void _init_theme_mode_set(HWND hDlg)
     RECT rcColor = { 0 };
     RECT rcEnable = { 0 };
     HFONT hFont = (HFONT)SendMessage(hDlg, WM_GETFONT, 0, 0);
-    int comboWidth = 80;
-    int comboHeight = 80;
+    int initialComboWidth = 80;
+    int initialComboHeight = 80;
     int labelWidth = 52;
     int labelHeight = 12;
     int left = 0;
     int top = 0;
+    int padding = _scale_by_dpi(6);
+    int gap = _scale_by_dpi(4);
+    int minComboWidth = _scale_by_dpi(60);
+    const TCHAR *labelText = _T("主题模式：");
+    HWND hPreview = NULL;
+    RECT rcLabel = { 0 };
+    RECT rcCombo = { 0 };
+    RECT rcPreview = { 0 };
+    RECT rcClient = { 0 };
+    int labelTextWidth = 0;
+    int desiredLabelWidth = 0;
+    int comboTextWidth = 0;
+    int desiredComboWidth = 0;
+    int maxRight = 0;
+    int comboLeft = 0;
+    int comboWidth = 0;
 
     GetWindowRect(GetDlgItem(hDlg, IDC_BUTTON_BGCOLOR), &rcColor);
     GetWindowRect(GetDlgItem(hDlg, IDC_CHECK_BIENABLE), &rcEnable);
@@ -361,14 +383,14 @@ static void _init_theme_mode_set(HWND hDlg)
     if (top + labelHeight >= rcEnable.top)
         top = rcEnable.top - labelHeight - 4;
 
-    hLabel = CreateWindowEx(0, WC_STATIC, _T("主题模式："),
+    hLabel = CreateWindowEx(0, WC_STATIC, labelText,
         WS_CHILD | WS_VISIBLE,
         left, top + 2, labelWidth, labelHeight,
         hDlg, (HMENU)IDC_STATIC_THEME_LABEL, hInst, NULL);
 
     hCombo = CreateWindowEx(0, WC_COMBOBOX, NULL,
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_TABSTOP,
-        left + labelWidth + 4, top, comboWidth, comboHeight,
+        left + labelWidth + 4, top, initialComboWidth, initialComboHeight,
         hDlg, (HMENU)IDC_COMBO_THEME_MODE, hInst, NULL);
 
     if (hFont)
@@ -384,6 +406,108 @@ static void _init_theme_mode_set(HWND hDlg)
         _display.theme_mode = ThemeModeLight;
 
     SendMessage(hCombo, CB_SETCURSEL, _display.theme_mode, 0);
+
+    labelTextWidth = _measure_text_width(hLabel, labelText);
+    desiredLabelWidth = max(labelWidth, labelTextWidth + padding);
+
+    GetWindowRect(hLabel, &rcLabel);
+    GetWindowRect(hCombo, &rcCombo);
+    MapWindowPoints(HWND_DESKTOP, hDlg, (LPPOINT)&rcLabel, 2);
+    MapWindowPoints(HWND_DESKTOP, hDlg, (LPPOINT)&rcCombo, 2);
+
+    hPreview = GetDlgItem(hDlg, IDC_STATIC_PREVIEW);
+    if (hPreview)
+    {
+        GetWindowRect(hPreview, &rcPreview);
+        MapWindowPoints(HWND_DESKTOP, hDlg, (LPPOINT)&rcPreview, 2);
+    }
+
+    GetClientRect(hDlg, &rcClient);
+    maxRight = rcClient.right - padding;
+    if (hPreview && rcPreview.left > 0)
+        maxRight = min(maxRight, rcPreview.left - gap);
+
+    if (rcLabel.left + desiredLabelWidth + gap > maxRight - minComboWidth)
+    {
+        int availableForLabel = maxRight - gap - rcLabel.left - minComboWidth;
+        if (availableForLabel > 0)
+            desiredLabelWidth = max(labelWidth, min(desiredLabelWidth, availableForLabel));
+    }
+    if (rcLabel.left + desiredLabelWidth + gap > maxRight)
+        desiredLabelWidth = max(0, maxRight - gap - rcLabel.left);
+
+    comboLeft = rcLabel.left + desiredLabelWidth + gap;
+    comboWidth = maxRight - comboLeft;
+    if (comboWidth < minComboWidth)
+        comboWidth = minComboWidth;
+    if (comboLeft + comboWidth > maxRight)
+        comboWidth = max(0, maxRight - comboLeft);
+
+    comboTextWidth = _measure_combo_text_width(hCombo);
+    desiredComboWidth = max(comboWidth, comboTextWidth + _scale_by_dpi(24));
+    if (comboLeft + desiredComboWidth <= maxRight)
+        comboWidth = desiredComboWidth;
+
+    SetWindowPos(hLabel, NULL, rcLabel.left, rcLabel.top, desiredLabelWidth,
+        rcLabel.bottom - rcLabel.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(hCombo, NULL, comboLeft, rcCombo.top, comboWidth,
+        rcCombo.bottom - rcCombo.top, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+static int _measure_text_width(HWND hWnd, const TCHAR *text)
+{
+    HDC hdc = NULL;
+    HFONT hFont = NULL;
+    HFONT hOldFont = NULL;
+    RECT rc = { 0 };
+
+    if (!text || !text[0])
+        return 0;
+
+    hdc = GetDC(hWnd);
+    if (!hdc)
+        return 0;
+
+    hFont = (HFONT)SendMessage(hWnd, WM_GETFONT, 0, 0);
+    if (hFont)
+        hOldFont = (HFONT)SelectObject(hdc, hFont);
+
+    DrawText(hdc, text, -1, &rc, DT_CALCRECT | DT_SINGLELINE);
+
+    if (hOldFont)
+        SelectObject(hdc, hOldFont);
+    ReleaseDC(hWnd, hdc);
+
+    return rc.right - rc.left;
+}
+
+static int _measure_combo_text_width(HWND hWndCombo)
+{
+    int index = 0;
+    int len = 0;
+    std::wstring text;
+
+    if (!hWndCombo)
+        return 0;
+
+    index = (int)SendMessage(hWndCombo, CB_GETCURSEL, 0, 0);
+    if (index == CB_ERR)
+        return 0;
+
+    len = (int)SendMessage(hWndCombo, CB_GETLBTEXTLEN, index, 0);
+    if (len <= 0)
+        return 0;
+
+    text.resize(len + 1);
+    SendMessage(hWndCombo, CB_GETLBTEXT, index, (LPARAM)text.data());
+    text.resize(len);
+
+    return _measure_text_width(hWndCombo, text.c_str());
+}
+
+static int _scale_by_dpi(int value)
+{
+    return (int)(value * GetDpiScaled() + 0.5);
 }
 
 static void _enable_font_set(HWND hDlg, BOOL enable)
