@@ -184,6 +184,12 @@ typedef struct keyset_t
     int   is_disable;
 } keyset_t;
 
+typedef enum theme_mode_t
+{
+    ThemeModeLight = 0,
+    ThemeModeDark = 1
+} theme_mode_t;
+
 typedef struct header_t
 {
     TCHAR version[16];
@@ -202,6 +208,7 @@ typedef struct header_t
     u32 font_color_title;
     int use_same_font;
     u32 bg_color;
+    int theme_mode;
     BYTE alpha;
     int char_gap;
     int line_gap;

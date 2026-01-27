@@ -118,6 +118,7 @@ BOOL                GetClientRectExceptStatusBar(HWND, RECT*);
 void                WheelSpeedInit(HWND);
 Gdiplus::Bitmap*    LoadBGImage(int, int, BYTE alpha=0xFF);
 BOOL                FileExists(TCHAR *);
+void                ApplyThemeToUi(HWND);
 void                StartAutoPage(HWND);
 void                StopAutoPage(HWND);
 void                PauseAutoPage(HWND);

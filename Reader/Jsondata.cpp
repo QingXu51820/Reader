@@ -586,6 +586,7 @@ class json_header_t
     cJSON* font_color_title;
     cJSON* use_same_font;
     cJSON* bg_color;
+    cJSON* theme_mode;
     cJSON* alpha;
     cJSON* meun_font_follow;
     cJSON* wheel_speed;
@@ -642,6 +643,7 @@ public:
         font_color_title = cJSON_AddULongToObject(parent, "font_color_title", data->font_color_title);
         use_same_font = cJSON_AddNumberToObject(parent, "use_same_font", data->use_same_font);
         bg_color = cJSON_AddULongToObject(parent, "bg_color", data->bg_color);
+        theme_mode = cJSON_AddNumberToObject(parent, "theme_mode", data->theme_mode);
         alpha = cJSON_AddNumberToObject(parent, "alpha", data->alpha);
         meun_font_follow = cJSON_AddNumberToObject(parent, "meun_font_follow", data->meun_font_follow);
         wheel_speed = cJSON_AddNumberToObject(parent, "wheel_speed", data->wheel_speed);
@@ -765,6 +767,7 @@ public:
         font_color_title = cJSON_GetObjectItem(parent, "font_color_title");
         use_same_font = cJSON_GetObjectItem(parent, "use_same_font");
         bg_color = cJSON_GetObjectItem(parent, "bg_color");
+        theme_mode = cJSON_GetObjectItem(parent, "theme_mode");
         alpha = cJSON_GetObjectItem(parent, "alpha");
         meun_font_follow = cJSON_GetObjectItem(parent, "meun_font_follow");
         wheel_speed = cJSON_GetObjectItem(parent, "wheel_speed");
@@ -938,6 +941,8 @@ public:
             data->use_same_font = use_same_font->valueint;
         if (bg_color)
             data->bg_color = *((u32*)&bg_color->valueint);
+        if (theme_mode)
+            data->theme_mode = theme_mode->valueint;
         if (alpha)
             data->alpha = (BYTE)alpha->valueint;
         if (meun_font_follow)
