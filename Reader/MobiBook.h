@@ -1,4 +1,4 @@
-#ifndef __MOBI_BOOK_H__
+﻿#ifndef __MOBI_BOOK_H__
 #define __MOBI_BOOK_H__
 
 #include "Book.h"
