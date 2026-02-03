@@ -6,7 +6,9 @@
 #include <CommDlg.h>
 #include <shlwapi.h>
 #include <WindowsX.h>
+#include <climits>
 #include <string>
+#include <vector>
 
 typedef struct display_set_data_t
 {
@@ -71,8 +73,11 @@ static void _update_preview(HDC hDC, RECT *rc);
 static void _apply_theme_preset(display_set_data_t *data);
 
 static int _measure_text_width(HWND hWnd, const TCHAR *text);
+static int _measure_text_height(HWND hWnd, const TCHAR *text);
 static int _measure_combo_text_width(HWND hWndCombo);
 static int _scale_by_dpi(int value);
+static HWND _find_groupbox_containing(HWND hDlg, const RECT *rcTarget);
+static void _offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND skip1, HWND skip2);
 
 #define IDC_STATIC_THEME_LABEL 20001
 #define IDC_COMBO_THEME_MODE   20002
@@ -372,6 +377,21 @@ static void _init_theme_mode_set(HWND hDlg)
     int maxRight = 0;
     int comboLeft = 0;
     int comboWidth = 0;
+    int labelTextHeight = 0;
+    int desiredLabelHeight = 0;
+    int comboHeight = 0;
+    int comboTop = 0;
+    HWND hGroup = NULL;
+    RECT rcGroup = { 0 };
+    int groupBottom = 0;
+    int desiredGroupBottom = 0;
+    int groupDelta = 0;
+    int groupPadding = _scale_by_dpi(6);
+    RECT rcDlg = { 0 };
+    int dlgWidth = 0;
+    int dlgHeight = 0;
+    int minDlgWidth = _scale_by_dpi(200);
+    int minDlgHeight = _scale_by_dpi(200);
 
     GetWindowRect(GetDlgItem(hDlg, IDC_BUTTON_BGCOLOR), &rcColor);
     GetWindowRect(GetDlgItem(hDlg, IDC_CHECK_BIENABLE), &rcEnable);
@@ -408,6 +428,7 @@ static void _init_theme_mode_set(HWND hDlg)
     SendMessage(hCombo, CB_SETCURSEL, _display.theme_mode, 0);
 
     labelTextWidth = _measure_text_width(hLabel, labelText);
+    labelTextHeight = _measure_text_height(hLabel, labelText);
     desiredLabelWidth = max(labelWidth, labelTextWidth + padding);
 
     GetWindowRect(hLabel, &rcLabel);
@@ -448,10 +469,38 @@ static void _init_theme_mode_set(HWND hDlg)
     if (comboLeft + desiredComboWidth <= maxRight)
         comboWidth = desiredComboWidth;
 
+    desiredLabelHeight = max(rcLabel.bottom - rcLabel.top, labelTextHeight + _scale_by_dpi(4));
+    comboHeight = max(rcCombo.bottom - rcCombo.top, desiredLabelHeight);
+    comboTop = rcLabel.top;
+    if (desiredLabelHeight > comboHeight)
+        comboTop = rcLabel.top + (desiredLabelHeight - comboHeight) / 2;
+
     SetWindowPos(hLabel, NULL, rcLabel.left, rcLabel.top, desiredLabelWidth,
-        rcLabel.bottom - rcLabel.top, SWP_NOZORDER | SWP_NOACTIVATE);
-    SetWindowPos(hCombo, NULL, comboLeft, rcCombo.top, comboWidth,
-        rcCombo.bottom - rcCombo.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        desiredLabelHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(hCombo, NULL, comboLeft, comboTop, comboWidth,
+        comboHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+
+    hGroup = _find_groupbox_containing(hDlg, &rcColor);
+    if (hGroup)
+    {
+        GetWindowRect(hGroup, &rcGroup);
+        MapWindowPoints(HWND_DESKTOP, hDlg, (LPPOINT)&rcGroup, 2);
+        groupBottom = rcGroup.bottom;
+        desiredGroupBottom = rcLabel.top + desiredLabelHeight + groupPadding;
+        if (desiredGroupBottom > groupBottom)
+        {
+            groupDelta = desiredGroupBottom - groupBottom;
+            SetWindowPos(hGroup, NULL, rcGroup.left, rcGroup.top,
+                rcGroup.right - rcGroup.left, (rcGroup.bottom - rcGroup.top) + groupDelta,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            _offset_controls_below(hDlg, groupBottom, groupDelta, hLabel, hCombo);
+            GetWindowRect(hDlg, &rcDlg);
+            dlgWidth = max(minDlgWidth, rcDlg.right - rcDlg.left);
+            dlgHeight = max(minDlgHeight, rcDlg.bottom - rcDlg.top + groupDelta);
+            SetWindowPos(hDlg, NULL, 0, 0, dlgWidth, dlgHeight,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
 }
 
 static int _measure_text_width(HWND hWnd, const TCHAR *text)
@@ -481,6 +530,33 @@ static int _measure_text_width(HWND hWnd, const TCHAR *text)
     return rc.right - rc.left;
 }
 
+static int _measure_text_height(HWND hWnd, const TCHAR *text)
+{
+    HDC hdc = NULL;
+    HFONT hFont = NULL;
+    HFONT hOldFont = NULL;
+    RECT rc = { 0 };
+
+    if (!text || !text[0])
+        return 0;
+
+    hdc = GetDC(hWnd);
+    if (!hdc)
+        return 0;
+
+    hFont = (HFONT)SendMessage(hWnd, WM_GETFONT, 0, 0);
+    if (hFont)
+        hOldFont = (HFONT)SelectObject(hdc, hFont);
+
+    DrawText(hdc, text, -1, &rc, DT_CALCRECT | DT_SINGLELINE);
+
+    if (hOldFont)
+        SelectObject(hdc, hOldFont);
+    ReleaseDC(hWnd, hdc);
+
+    return rc.bottom - rc.top;
+}
+
 static int _measure_combo_text_width(HWND hWndCombo)
 {
     int index = 0;
@@ -508,6 +584,105 @@ static int _measure_combo_text_width(HWND hWndCombo)
 static int _scale_by_dpi(int value)
 {
     return (int)(value * GetDpiScaled() + 0.5);
+}
+
+static HWND _find_groupbox_containing(HWND hDlg, const RECT *rcTarget)
+{
+    struct FindGroupContext
+    {
+        HWND hDlg;
+        POINT pt;
+        HWND result;
+        int bestArea;
+    } ctx = { hDlg, { 0, 0 }, NULL, INT_MAX };
+
+    if (!rcTarget)
+        return NULL;
+
+    ctx.pt.x = (rcTarget->left + rcTarget->right) / 2;
+    ctx.pt.y = (rcTarget->top + rcTarget->bottom) / 2;
+
+    EnumChildWindows(hDlg, [](HWND hWnd, LPARAM lParam) -> BOOL
+    {
+        FindGroupContext *context = (FindGroupContext *)lParam;
+        TCHAR className[32] = { 0 };
+        LONG_PTR style = GetWindowLongPtr(hWnd, GWL_STYLE);
+        RECT rc = { 0 };
+        int area = 0;
+
+        if ((style & BS_GROUPBOX) == 0)
+            return TRUE;
+
+        GetClassName(hWnd, className, (int)(sizeof(className) / sizeof(className[0])));
+        if (_tcscmp(className, _T("Button")) != 0)
+            return TRUE;
+
+        GetWindowRect(hWnd, &rc);
+        MapWindowPoints(HWND_DESKTOP, context->hDlg, (LPPOINT)&rc, 2);
+        if (context->pt.x < rc.left || context->pt.x > rc.right
+            || context->pt.y < rc.top || context->pt.y > rc.bottom)
+            return TRUE;
+
+        area = (rc.right - rc.left) * (rc.bottom - rc.top);
+        if (area > 0 && area < context->bestArea)
+        {
+            context->result = hWnd;
+            context->bestArea = area;
+        }
+        return TRUE;
+    }, (LPARAM)&ctx);
+
+    return ctx.result;
+}
+
+static void _offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND skip1, HWND skip2)
+{
+    if (delta == 0)
+        return;
+
+    struct OffsetContext
+    {
+        HWND hDlg;
+        int thresholdY;
+        int delta;
+        HWND skip1;
+        HWND skip2;
+        std::vector<HWND> handles;
+    } ctx = { hDlg, thresholdY, delta, skip1, skip2 };
+
+    EnumChildWindows(hDlg, [](HWND hWnd, LPARAM lParam) -> BOOL
+    {
+        OffsetContext *context = (OffsetContext *)lParam;
+        RECT rc = { 0 };
+
+        if (hWnd == context->skip1 || hWnd == context->skip2)
+            return TRUE;
+
+        GetWindowRect(hWnd, &rc);
+        MapWindowPoints(HWND_DESKTOP, context->hDlg, (LPPOINT)&rc, 2);
+        if (rc.top >= context->thresholdY)
+            context->handles.push_back(hWnd);
+
+        return TRUE;
+    }, (LPARAM)&ctx);
+
+    if (ctx.handles.empty())
+        return;
+
+    HDWP hdwp = BeginDeferWindowPos((int)ctx.handles.size());
+    for (HWND hWnd : ctx.handles)
+    {
+        RECT rc = { 0 };
+        GetWindowRect(hWnd, &rc);
+        MapWindowPoints(HWND_DESKTOP, hDlg, (LPPOINT)&rc, 2);
+        hdwp = DeferWindowPos(hdwp, hWnd, NULL, rc.left, rc.top + delta,
+            rc.right - rc.left, rc.bottom - rc.top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!hdwp)
+            break;
+    }
+    if (hdwp)
+        EndDeferWindowPos(hdwp);
 }
 
 static void _enable_font_set(HWND hDlg, BOOL enable)
