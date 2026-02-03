@@ -71,6 +71,7 @@ static void _update_preview(HDC hDC, RECT *rc);
 static void _apply_theme_preset(display_set_data_t *data);
 
 static int _measure_text_width(HWND hWnd, const TCHAR *text);
+static int _measure_text_height(HWND hWnd, const TCHAR *text);
 static int _measure_combo_text_width(HWND hWndCombo);
 static int _scale_by_dpi(int value);
 
@@ -372,6 +373,10 @@ static void _init_theme_mode_set(HWND hDlg)
     int maxRight = 0;
     int comboLeft = 0;
     int comboWidth = 0;
+    int labelTextHeight = 0;
+    int desiredLabelHeight = 0;
+    int comboHeight = 0;
+    int comboTop = 0;
 
     GetWindowRect(GetDlgItem(hDlg, IDC_BUTTON_BGCOLOR), &rcColor);
     GetWindowRect(GetDlgItem(hDlg, IDC_CHECK_BIENABLE), &rcEnable);
@@ -408,6 +413,7 @@ static void _init_theme_mode_set(HWND hDlg)
     SendMessage(hCombo, CB_SETCURSEL, _display.theme_mode, 0);
 
     labelTextWidth = _measure_text_width(hLabel, labelText);
+    labelTextHeight = _measure_text_height(hLabel, labelText);
     desiredLabelWidth = max(labelWidth, labelTextWidth + padding);
 
     GetWindowRect(hLabel, &rcLabel);
@@ -448,10 +454,16 @@ static void _init_theme_mode_set(HWND hDlg)
     if (comboLeft + desiredComboWidth <= maxRight)
         comboWidth = desiredComboWidth;
 
+    desiredLabelHeight = max(rcLabel.bottom - rcLabel.top, labelTextHeight + _scale_by_dpi(4));
+    comboHeight = max(rcCombo.bottom - rcCombo.top, desiredLabelHeight);
+    comboTop = rcLabel.top;
+    if (desiredLabelHeight > comboHeight)
+        comboTop = rcLabel.top + (desiredLabelHeight - comboHeight) / 2;
+
     SetWindowPos(hLabel, NULL, rcLabel.left, rcLabel.top, desiredLabelWidth,
-        rcLabel.bottom - rcLabel.top, SWP_NOZORDER | SWP_NOACTIVATE);
-    SetWindowPos(hCombo, NULL, comboLeft, rcCombo.top, comboWidth,
-        rcCombo.bottom - rcCombo.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        desiredLabelHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(hCombo, NULL, comboLeft, comboTop, comboWidth,
+        comboHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 static int _measure_text_width(HWND hWnd, const TCHAR *text)
@@ -479,6 +491,33 @@ static int _measure_text_width(HWND hWnd, const TCHAR *text)
     ReleaseDC(hWnd, hdc);
 
     return rc.right - rc.left;
+}
+
+static int _measure_text_height(HWND hWnd, const TCHAR *text)
+{
+    HDC hdc = NULL;
+    HFONT hFont = NULL;
+    HFONT hOldFont = NULL;
+    RECT rc = { 0 };
+
+    if (!text || !text[0])
+        return 0;
+
+    hdc = GetDC(hWnd);
+    if (!hdc)
+        return 0;
+
+    hFont = (HFONT)SendMessage(hWnd, WM_GETFONT, 0, 0);
+    if (hFont)
+        hOldFont = (HFONT)SelectObject(hdc, hFont);
+
+    DrawText(hdc, text, -1, &rc, DT_CALCRECT | DT_SINGLELINE);
+
+    if (hOldFont)
+        SelectObject(hdc, hOldFont);
+    ReleaseDC(hWnd, hdc);
+
+    return rc.bottom - rc.top;
 }
 
 static int _measure_combo_text_width(HWND hWndCombo)
