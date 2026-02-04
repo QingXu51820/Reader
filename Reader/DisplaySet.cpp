@@ -387,6 +387,11 @@ static void _init_theme_mode_set(HWND hDlg)
     int desiredGroupBottom = 0;
     int groupDelta = 0;
     int groupPadding = _scale_by_dpi(6);
+    RECT rcDlg = { 0 };
+    int dlgWidth = 0;
+    int dlgHeight = 0;
+    int minDlgWidth = _scale_by_dpi(200);
+    int minDlgHeight = _scale_by_dpi(200);
 
     GetWindowRect(GetDlgItem(hDlg, IDC_BUTTON_BGCOLOR), &rcColor);
     GetWindowRect(GetDlgItem(hDlg, IDC_CHECK_BIENABLE), &rcEnable);
@@ -489,7 +494,10 @@ static void _init_theme_mode_set(HWND hDlg)
                 rcGroup.right - rcGroup.left, (rcGroup.bottom - rcGroup.top) + groupDelta,
                 SWP_NOZORDER | SWP_NOACTIVATE);
             _offset_controls_below(hDlg, groupBottom, groupDelta, hLabel, hCombo);
-            SetWindowPos(hDlg, NULL, 0, 0, 0, rcClient.bottom + groupDelta,
+            GetWindowRect(hDlg, &rcDlg);
+            dlgWidth = max(minDlgWidth, rcDlg.right - rcDlg.left);
+            dlgHeight = max(minDlgHeight, rcDlg.bottom - rcDlg.top + groupDelta);
+            SetWindowPos(hDlg, NULL, 0, 0, dlgWidth, dlgHeight,
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
     }
