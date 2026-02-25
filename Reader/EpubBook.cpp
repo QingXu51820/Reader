@@ -739,7 +739,7 @@ BOOL EpubBook::ParserOps(file_data_t *fdata, wchar_t **text, int *len, wchar_t *
     xmlNodeSetPtr nodeset;
     int i;
     BOOL ret = FALSE;
-    xmlKeepBlanksDefault(0);
+    int keep_blanks_default = xmlKeepBlanksDefault(0);
     doc = htmlReadMemory((const char *)fdata->data, fdata->size, NULL, NULL, XML_PARSE_RECOVER | XML_PARSE_NOBLANKS);
     if (!doc)
         goto end;
@@ -842,6 +842,7 @@ body:
     }
 
 end:
+    xmlKeepBlanksDefault(keep_blanks_default);
     if (xpathobj)
         xmlXPathFreeObject(xpathobj);
     if (xpathctx)
