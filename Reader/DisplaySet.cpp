@@ -76,8 +76,8 @@ static int _measure_text_width(HWND hWnd, const TCHAR *text);
 static int _measure_text_height(HWND hWnd, const TCHAR *text);
 static int _measure_combo_text_width(HWND hWndCombo);
 static int _scale_by_dpi(int value);
-static HWND _find_groupbox_containing(HWND hDlg, const RECT *rcTarget);
-static void _offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND skip1, HWND skip2);
+static HWND find_groupbox_containing(HWND hDlg, const RECT *rcTarget);
+static void offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND skip1, HWND skip2);
 
 #define IDC_STATIC_THEME_LABEL 20001
 #define IDC_COMBO_THEME_MODE   20002
@@ -480,7 +480,7 @@ static void _init_theme_mode_set(HWND hDlg)
     SetWindowPos(hCombo, NULL, comboLeft, comboTop, comboWidth,
         comboHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 
-    hGroup = _find_groupbox_containing(hDlg, &rcColor);
+    hGroup = find_groupbox_containing(hDlg, &rcColor);
     if (hGroup)
     {
         GetWindowRect(hGroup, &rcGroup);
@@ -493,7 +493,7 @@ static void _init_theme_mode_set(HWND hDlg)
             SetWindowPos(hGroup, NULL, rcGroup.left, rcGroup.top,
                 rcGroup.right - rcGroup.left, (rcGroup.bottom - rcGroup.top) + groupDelta,
                 SWP_NOZORDER | SWP_NOACTIVATE);
-            _offset_controls_below(hDlg, groupBottom, groupDelta, hLabel, hCombo);
+            offset_controls_below(hDlg, groupBottom, groupDelta, hLabel, hCombo);
             GetWindowRect(hDlg, &rcDlg);
             dlgWidth = max(minDlgWidth, rcDlg.right - rcDlg.left);
             dlgHeight = max(minDlgHeight, rcDlg.bottom - rcDlg.top + groupDelta);
@@ -586,7 +586,7 @@ static int _scale_by_dpi(int value)
     return (int)(value * GetDpiScaled() + 0.5);
 }
 
-static HWND _find_groupbox_containing(HWND hDlg, const RECT *rcTarget)
+static HWND find_groupbox_containing(HWND hDlg, const RECT *rcTarget)
 {
     struct FindGroupContext
     {
@@ -635,7 +635,7 @@ static HWND _find_groupbox_containing(HWND hDlg, const RECT *rcTarget)
     return ctx.result;
 }
 
-static void _offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND skip1, HWND skip2)
+static void offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND skip1, HWND skip2)
 {
     if (delta == 0)
         return;
