@@ -7,8 +7,25 @@
 #include <shlwapi.h>
 #include <WindowsX.h>
 #include <climits>
-#include <string>
-#include <vector>
+
+typedef struct find_group_context_t
+{
+    HWND hDlg;
+    POINT pt;
+    HWND result;
+    int bestArea;
+} find_group_context_t;
+
+typedef struct offset_context_t
+{
+    HWND hDlg;
+    int thresholdY;
+    int delta;
+    HWND skip1;
+    HWND skip2;
+    HWND handles[256];
+    int count;
+} offset_context_t;
 
 typedef struct display_set_data_t
 {
@@ -78,6 +95,8 @@ static int _measure_combo_text_width(HWND hWndCombo);
 static int _scale_by_dpi(int value);
 static HWND find_groupbox_containing(HWND hDlg, const RECT *rcTarget);
 static void offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND skip1, HWND skip2);
+static BOOL CALLBACK _find_groupbox_enum_proc(HWND hWnd, LPARAM lParam);
+static BOOL CALLBACK _offset_controls_enum_proc(HWND hWnd, LPARAM lParam);
 
 #define IDC_STATIC_THEME_LABEL 20001
 #define IDC_COMBO_THEME_MODE   20002
@@ -561,7 +580,8 @@ static int _measure_combo_text_width(HWND hWndCombo)
 {
     int index = 0;
     int len = 0;
-    std::wstring text;
+    TCHAR *text = NULL;
+    int width = 0;
 
     if (!hWndCombo)
         return 0;
@@ -574,11 +594,16 @@ static int _measure_combo_text_width(HWND hWndCombo)
     if (len <= 0)
         return 0;
 
-    text.resize(len + 1);
-    SendMessage(hWndCombo, CB_GETLBTEXT, index, (LPARAM)text.data());
-    text.resize(len);
+    text = new TCHAR[len + 1];
+    if (!text)
+        return 0;
+    text[0] = _T('\0');
+    SendMessage(hWndCombo, CB_GETLBTEXT, index, (LPARAM)text);
 
-    return _measure_text_width(hWndCombo, text.c_str());
+    width = _measure_text_width(hWndCombo, text);
+    delete[] text;
+
+    return width;
 }
 
 static int _scale_by_dpi(int value)
@@ -588,13 +613,7 @@ static int _scale_by_dpi(int value)
 
 static HWND find_groupbox_containing(HWND hDlg, const RECT *rcTarget)
 {
-    struct FindGroupContext
-    {
-        HWND hDlg;
-        POINT pt;
-        HWND result;
-        int bestArea;
-    } ctx = { hDlg, { 0, 0 }, NULL, INT_MAX };
+    find_group_context_t ctx = { hDlg, { 0, 0 }, NULL, INT_MAX };
 
     if (!rcTarget)
         return NULL;
@@ -602,35 +621,7 @@ static HWND find_groupbox_containing(HWND hDlg, const RECT *rcTarget)
     ctx.pt.x = (rcTarget->left + rcTarget->right) / 2;
     ctx.pt.y = (rcTarget->top + rcTarget->bottom) / 2;
 
-    EnumChildWindows(hDlg, [](HWND hWnd, LPARAM lParam) -> BOOL
-    {
-        FindGroupContext *context = (FindGroupContext *)lParam;
-        TCHAR className[32] = { 0 };
-        LONG_PTR style = GetWindowLongPtr(hWnd, GWL_STYLE);
-        RECT rc = { 0 };
-        int area = 0;
-
-        if ((style & BS_GROUPBOX) == 0)
-            return TRUE;
-
-        GetClassName(hWnd, className, (int)(sizeof(className) / sizeof(className[0])));
-        if (_tcscmp(className, _T("Button")) != 0)
-            return TRUE;
-
-        GetWindowRect(hWnd, &rc);
-        MapWindowPoints(HWND_DESKTOP, context->hDlg, (LPPOINT)&rc, 2);
-        if (context->pt.x < rc.left || context->pt.x > rc.right
-            || context->pt.y < rc.top || context->pt.y > rc.bottom)
-            return TRUE;
-
-        area = (rc.right - rc.left) * (rc.bottom - rc.top);
-        if (area > 0 && area < context->bestArea)
-        {
-            context->result = hWnd;
-            context->bestArea = area;
-        }
-        return TRUE;
-    }, (LPARAM)&ctx);
+    EnumChildWindows(hDlg, _find_groupbox_enum_proc, (LPARAM)&ctx);
 
     return ctx.result;
 }
@@ -640,39 +631,19 @@ static void offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND ski
     if (delta == 0)
         return;
 
-    struct OffsetContext
-    {
-        HWND hDlg;
-        int thresholdY;
-        int delta;
-        HWND skip1;
-        HWND skip2;
-        std::vector<HWND> handles;
-    } ctx = { hDlg, thresholdY, delta, skip1, skip2 };
+    offset_context_t ctx = { hDlg, thresholdY, delta, skip1, skip2, { 0 }, 0 };
 
-    EnumChildWindows(hDlg, [](HWND hWnd, LPARAM lParam) -> BOOL
-    {
-        OffsetContext *context = (OffsetContext *)lParam;
-        RECT rc = { 0 };
+    EnumChildWindows(hDlg, _offset_controls_enum_proc, (LPARAM)&ctx);
 
-        if (hWnd == context->skip1 || hWnd == context->skip2)
-            return TRUE;
-
-        GetWindowRect(hWnd, &rc);
-        MapWindowPoints(HWND_DESKTOP, context->hDlg, (LPPOINT)&rc, 2);
-        if (rc.top >= context->thresholdY)
-            context->handles.push_back(hWnd);
-
-        return TRUE;
-    }, (LPARAM)&ctx);
-
-    if (ctx.handles.empty())
+    if (ctx.count == 0)
         return;
 
-    HDWP hdwp = BeginDeferWindowPos((int)ctx.handles.size());
-    for (HWND hWnd : ctx.handles)
+    HDWP hdwp = BeginDeferWindowPos(ctx.count);
+    int i = 0;
+    for (i = 0; i < ctx.count; i++)
     {
         RECT rc = { 0 };
+        HWND hWnd = ctx.handles[i];
         GetWindowRect(hWnd, &rc);
         MapWindowPoints(HWND_DESKTOP, hDlg, (LPPOINT)&rc, 2);
         hdwp = DeferWindowPos(hdwp, hWnd, NULL, rc.left, rc.top + delta,
@@ -683,6 +654,55 @@ static void offset_controls_below(HWND hDlg, int thresholdY, int delta, HWND ski
     }
     if (hdwp)
         EndDeferWindowPos(hdwp);
+}
+
+static BOOL CALLBACK _find_groupbox_enum_proc(HWND hWnd, LPARAM lParam)
+{
+    find_group_context_t *context = (find_group_context_t *)lParam;
+    TCHAR className[32] = { 0 };
+    LONG_PTR style = GetWindowLongPtr(hWnd, GWL_STYLE);
+    RECT rc = { 0 };
+    int area = 0;
+
+    if ((style & BS_GROUPBOX) == 0)
+        return TRUE;
+
+    GetClassName(hWnd, className, (int)(sizeof(className) / sizeof(className[0])));
+    if (_tcscmp(className, _T("Button")) != 0)
+        return TRUE;
+
+    GetWindowRect(hWnd, &rc);
+    MapWindowPoints(HWND_DESKTOP, context->hDlg, (LPPOINT)&rc, 2);
+    if (context->pt.x < rc.left || context->pt.x > rc.right
+        || context->pt.y < rc.top || context->pt.y > rc.bottom)
+        return TRUE;
+
+    area = (rc.right - rc.left) * (rc.bottom - rc.top);
+    if (area > 0 && area < context->bestArea)
+    {
+        context->result = hWnd;
+        context->bestArea = area;
+    }
+    return TRUE;
+}
+
+static BOOL CALLBACK _offset_controls_enum_proc(HWND hWnd, LPARAM lParam)
+{
+    offset_context_t *context = (offset_context_t *)lParam;
+    RECT rc = { 0 };
+
+    if (hWnd == context->skip1 || hWnd == context->skip2)
+        return TRUE;
+
+    GetWindowRect(hWnd, &rc);
+    MapWindowPoints(HWND_DESKTOP, context->hDlg, (LPPOINT)&rc, 2);
+    if (rc.top >= context->thresholdY && context->count < (int)(sizeof(context->handles) / sizeof(context->handles[0])))
+    {
+        context->handles[context->count] = hWnd;
+        context->count++;
+    }
+
+    return TRUE;
 }
 
 static void _enable_font_set(HWND hDlg, BOOL enable)
